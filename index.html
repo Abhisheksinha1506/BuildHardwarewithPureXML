@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BOMForge – XML-Driven Bill of Materials Composer</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <!-- SaxonJS - Browser runtime version (local file first, then CDN fallback) -->
+    <script>
+        // Load SaxonJS with multiple fallback options
+        function loadSaxonJS() {
+            const scripts = [
+                'lib/SaxonJS2.rt.js',  // Local file (preferred)
+                'https://unpkg.com/saxon-js@2.6/SaxonJS2.rt.js',  // unpkg CDN
+                'https://cdnjs.cloudflare.com/ajax/libs/saxon-js/2.6/SaxonJS2.rt.js'  // cdnjs CDN
+            ];
+            
+            let currentIndex = 0;
+            
+            function tryNextScript() {
+                if (currentIndex >= scripts.length) {
+                    console.error('SaxonJS failed to load from all sources.');
+                    alert('Warning: SaxonJS library could not be loaded.\n\nPlease:\n1. Download SaxonJS Browser Runtime from https://www.saxonica.com/download/javascript.xml\n2. Extract and copy SaxonJS2.rt.js to the lib/ directory\n3. See DOWNLOAD_SAXONJS.md for detailed instructions\n4. Refresh this page');
+                    return;
+                }
+                
+                const script = document.createElement('script');
+                script.src = scripts[currentIndex];
+                script.onload = function() {
+                    console.log('SaxonJS loaded successfully from:', scripts[currentIndex]);
+                };
+                script.onerror = function() {
+                    console.warn('Failed to load SaxonJS from:', scripts[currentIndex]);
+                    currentIndex++;
+                    tryNextScript();
+                };
+                document.head.appendChild(script);
+            }
+            
+            tryNextScript();
+        }
+        
+        // Start loading when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', loadSaxonJS);
+        } else {
+            loadSaxonJS();
+        }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>BOMForge</h1>
+            <p class="tagline">Build Hardware with Pure XML</p>
+            <div class="header-controls">
+                <button id="darkModeToggle" class="btn-secondary">🌙 Dark Mode</button>
+                <button id="loadSampleBtn" class="btn-secondary">Load Sample</button>
+                <button id="loadBomBtn" class="btn-secondary">Load BOM</button>
+                <button id="saveBomBtn" class="btn-primary">Save BOM</button>
+                <button id="exportBtn" class="btn-primary">Export All</button>
+            </div>
+        </header>
+
+        <div class="info-section">
+            <div class="info-content">
+                <h3>📖 How It Works</h3>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <strong>1. Build Your BOM</strong>
+                        <p>Create assemblies and add parts in a hierarchical tree structure. Each part can have details like SKU, quantity, cost, and supplier information.</p>
+                    </div>
+                    <div class="info-item">
+                        <strong>2. Real-Time Validation</strong>
+                        <p>Your BOM is automatically validated as you work. Required fields are checked, and costs are calculated automatically for assemblies.</p>
+                    </div>
+                    <div class="info-item">
+                        <strong>3. Export Multi-Format</strong>
+                        <p>One click generates multiple outputs: Shopping List (grouped by supplier), Cost Summary (hierarchical breakdown), and Assembly Guide (step-by-step instructions).</p>
+                    </div>
+                    <div class="info-item">
+                        <strong>4. Pure XML Technology</strong>
+                        <p>Your BOM is stored as valid XML, transformed using XSLT 3.0. Save and load your BOM files, or share them with others. All data is structured and portable.</p>
+                    </div>
+                </div>
+                <div class="info-quick-start">
+                    <strong>🚀 Quick Start:</strong> Click <strong>"Load Sample"</strong> to see an example, or click <strong>"+ Assembly"</strong> to start building your own BOM!
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="editor-panel">
+                <div class="panel-header">
+                    <h2>Parts Tree</h2>
+                    <div>
+                        <button id="addAssemblyBtn" class="btn-small">+ Assembly</button>
+                        <button id="addPartBtn" class="btn-small">+ Part</button>
+                    </div>
+                </div>
+                <div class="panel-description">
+                    <p>Build your BOM hierarchy here. Click items to select and edit. Use <strong>Assemblies</strong> to group related parts, and <strong>Parts</strong> for individual components.</p>
+                </div>
+                <div id="partsTree" class="parts-tree">
+                    <div class="empty-state">
+                        <p>No parts yet. Add an assembly or part to get started.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="details-panel">
+                <div class="panel-header">
+                    <h2>Part Details</h2>
+                </div>
+                <div class="panel-description">
+                    <p>Edit selected items here. For <strong>Parts</strong>: enter name, quantity, cost, supplier, and SKU. For <strong>Assemblies</strong>: edit the name and view total cost.</p>
+                </div>
+                <div id="partDetails" class="part-details">
+                    <div class="empty-state">
+                        <p>Select a part or assembly to edit details.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="output-panel">
+            <div class="panel-header">
+                <h2>XSLT Outputs</h2>
+                <div class="output-tabs">
+                    <button class="tab-btn active" data-tab="shopping-list">Shopping List</button>
+                    <button class="tab-btn" data-tab="cost-summary">Cost Summary</button>
+                    <button class="tab-btn" data-tab="assembly-guide">Assembly Guide</button>
+                </div>
+            </div>
+            <div class="panel-description">
+                <p>View generated reports here after clicking <strong>"Export All"</strong>. The XSLT transformations create three different views: parts grouped by supplier, cost breakdown, and step-by-step assembly instructions.</p>
+            </div>
+            <div id="outputContent" class="output-content">
+                <div class="tab-content active" id="shopping-list">
+                    <p class="empty-state">Generate outputs by clicking "Export All"</p>
+                </div>
+                <div class="tab-content" id="cost-summary">
+                    <p class="empty-state">Generate outputs by clicking "Export All"</p>
+                </div>
+                <div class="tab-content" id="assembly-guide">
+                    <p class="empty-state">Generate outputs by clicking "Export All"</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="validationErrors" class="validation-errors hidden"></div>
+    </div>
+
+    <input type="file" id="fileInput" accept=".xml,.bom.xml" style="display: none;">
+    
+    <script src="js/bom-builder.js"></script>
+    <script src="js/export.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bom>
+  <assembly>
+    <name>3D Printer Hotend</name>
+    <part>
+      <name>Heater Cartridge 40W</name>
+      <sku>E3D-HT-40W</sku>
+      <quantity>1</quantity>
+      <cost>12.99</cost>
+      <supplier>E3D Online</supplier>
+      <description>40W 24V heater cartridge</description>
+    </part>
+    <part>
+      <name>Thermistor 100K</name>
+      <sku>E3D-TH-100K</sku>
+      <quantity>1</quantity>
+      <cost>3.50</cost>
+      <supplier>E3D Online</supplier>
+      <description>100K NTC thermistor</description>
+    </part>
+    <assembly>
+      <name>Nozzle Assembly</name>
+      <part>
+        <name>Nozzle 0.4mm</name>
+        <sku>E3D-NZ-04</sku>
+        <quantity>1</quantity>
+        <cost>8.99</cost>
+        <supplier>E3D Online</supplier>
+        <compatibility>
+          <rule>M6 threads</rule>
+          <rule>Compatible with V6 hotend</rule>
+        </compatibility>
+      </part>
+      <part>
+        <name>Heatbreak</name>
+        <sku>E3D-HB-V6</sku>
+        <quantity>1</quantity>
+        <cost>15.99</cost>
+        <supplier>E3D Online</supplier>
+      </part>
+    </assembly>
+  </assembly>
+</bom>
+

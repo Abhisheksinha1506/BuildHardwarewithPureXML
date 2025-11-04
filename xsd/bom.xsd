@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" 
+           elementFormDefault="qualified">
+  
+  <xs:element name="bom" type="BOMType"/>
+  
+  <xs:complexType name="BOMType">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+      <xs:element name="assembly" type="AssemblyType"/>
+      <xs:element name="part" type="PartType"/>
+    </xs:choice>
+  </xs:complexType>
+  
+  <xs:complexType name="AssemblyType">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/>
+      <xs:choice minOccurs="0" maxOccurs="unbounded">
+        <xs:element name="assembly" type="AssemblyType"/>
+        <xs:element name="part" type="PartType"/>
+      </xs:choice>
+    </xs:sequence>
+  </xs:complexType>
+  
+  <xs:complexType name="PartType">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/>
+      <xs:element name="sku" type="xs:string" minOccurs="0"/>
+      <xs:element name="quantity" type="xs:positiveInteger"/>
+      <xs:element name="cost" type="xs:decimal"/>
+      <xs:element name="supplier" type="xs:string" minOccurs="0"/>
+      <xs:element name="description" type="xs:string" minOccurs="0"/>
+      <xs:element name="compatibility" type="CompatibilityType" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+  
+  <xs:complexType name="CompatibilityType">
+    <xs:sequence>
+      <xs:element name="rule" type="xs:string" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  
+</xs:schema>
+
