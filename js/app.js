@@ -1,6 +1,22 @@
 let bomBuilder;
 let selectedItem = null;
 let darkMode = false;
+let tooltipsSetup = false;
+let tooltipHandlers = {
+    documentClick: null,
+    documentKeydown: null
+};
+let treeClickHandler = null; // Store tree event delegation handler
+let costCache = new Map(); // Cache for cost calculations
+let validateTimeout = null; // Timeout for debounced validation
+
+// Debounce helper function
+function debounce(func, wait) {
+    return function(...args) {
+        clearTimeout(validateTimeout);
+        validateTimeout = setTimeout(() => func.apply(this, args), wait);
+    };
+}
 
 try {
     if (typeof localStorage !== 'undefined') {
@@ -29,7 +45,7 @@ function initializeUI() {
     }
     if (bomBuilder.root) {
         renderTree();
-        validateBOM();
+        validateBOM(); // Initial validation doesn't need debouncing
     }
 }
 
@@ -41,6 +57,7 @@ function setupEventListeners() {
     const loadBomBtn = document.getElementById('loadBomBtn');
     const loadSampleBtn = document.getElementById('loadSampleBtn');
     const exportBtn = document.getElementById('exportBtn');
+    const exportBtnOutput = document.getElementById('exportBtnOutput');
     const fileInput = document.getElementById('fileInput');
     
     if (!darkModeToggle || !addAssemblyBtn || !addPartBtn || !saveBomBtn || 
@@ -57,13 +74,20 @@ function setupEventListeners() {
         fileInput.click();
     });
     loadSampleBtn.addEventListener('click', loadSample);
-    exportBtn.addEventListener('click', () => {
+    
+    const handleExport = () => {
         if (typeof exportAll === 'function') {
             exportAll();
         } else {
             alert('Export functionality loading...');
         }
-    });
+    };
+    
+    exportBtn.addEventListener('click', handleExport);
+    if (exportBtnOutput) {
+        exportBtnOutput.addEventListener('click', handleExport);
+    }
+    
     fileInput.addEventListener('change', handleFileLoad);
     
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -74,6 +98,9 @@ function setupEventListeners() {
             }
         });
     });
+    
+    // Setup tooltip functionality
+    setupTooltips();
 }
 
 function toggleDarkMode() {
@@ -112,8 +139,7 @@ function addAssembly() {
         const assembly = bomBuilder.createAssembly(name.trim(), parent);
         renderTree();
         selectItem(assembly);
-        updateCostDisplay();
-        validateBOM();
+        debouncedValidateBOM();
     }
 }
 
@@ -126,8 +152,7 @@ function addPart() {
     const part = bomBuilder.createPart({ name: 'New Part' }, parent);
     renderTree();
     selectItem(part);
-    updateCostDisplay();
-    validateBOM();
+    debouncedValidateBOM();
 }
 
 function escapeHTML(str) {
@@ -141,6 +166,12 @@ function renderTree() {
     const treeContainer = document.getElementById('partsTree');
     if (!treeContainer) return;
     
+    // Remove old event delegation handler if it exists
+    if (treeClickHandler) {
+        treeContainer.removeEventListener('click', treeClickHandler);
+        treeClickHandler = null;
+    }
+    
     if (!bomBuilder || !bomBuilder.root) {
         treeContainer.innerHTML = '<div class="empty-state"><p>No parts yet. Add an assembly or part to get started.</p></div>';
         return;
@@ -153,7 +184,11 @@ function renderTree() {
         return;
     }
     
-    treeContainer.innerHTML = '';
+    // Clear cost cache for fresh calculations
+    costCache.clear();
+    
+    // Use DocumentFragment for batch DOM operations
+    const fragment = document.createDocumentFragment();
     
     function renderItem(item) {
         if (!item) return null;
@@ -167,9 +202,22 @@ function renderTree() {
         itemDiv.dataset.itemId = item.id;
         
         const icon = item.type === 'assembly' ? '📦' : '🔩';
-        const cost = item.type === 'part' 
-            ? `$${((item.cost || 0) * (item.quantity || 1)).toFixed(2)}` 
-            : `$${(bomBuilder ? bomBuilder.calculateTotalCost(item) : 0).toFixed(2)}`;
+        
+        // Cache cost calculations to avoid O(n²) complexity
+        let cost;
+        if (item.type === 'part') {
+            cost = `$${((item.cost || 0) * (item.quantity || 1)).toFixed(2)}`;
+        } else {
+            // Use cached cost if available, otherwise calculate and cache
+            if (costCache.has(item.id)) {
+                cost = `$${costCache.get(item.id).toFixed(2)}`;
+            } else {
+                const totalCost = bomBuilder ? bomBuilder.calculateTotalCost(item) : 0;
+                costCache.set(item.id, totalCost);
+                cost = `$${totalCost.toFixed(2)}`;
+            }
+        }
+        
         const escapedName = escapeHTML(item.name || 'Unnamed');
         const escapedId = escapeHTML(item.id);
         
@@ -179,16 +227,10 @@ function renderTree() {
                 <span class="tree-item-name">${escapedName}</span>
                 <span style="color: var(--text-secondary); font-size: 0.9em;">${cost}</span>
                 <div class="tree-item-actions">
-                    <button onclick="event.stopPropagation(); deleteItem('${escapedId}')">Delete</button>
+                    <button data-action="delete" data-item-id="${escapedId}">Delete</button>
                 </div>
             </div>
         `;
-        
-        itemDiv.addEventListener('click', (e) => {
-            if (!e.target.closest('.tree-item-actions')) {
-                selectItem(item);
-            }
-        });
         
         if (item.children && Array.isArray(item.children) && item.children.length > 0) {
             const childrenDiv = document.createElement('div');
@@ -210,10 +252,41 @@ function renderTree() {
         for (const child of rootChildren) {
             const childElement = renderItem(child);
             if (childElement) {
-                treeContainer.appendChild(childElement);
+                fragment.appendChild(childElement);
             }
         }
     }
+    
+    // Clear container and append fragment in one operation
+    treeContainer.innerHTML = '';
+    treeContainer.appendChild(fragment);
+    
+    // Set up event delegation on the container (single listener for all items)
+    treeClickHandler = (e) => {
+        const target = e.target;
+        const treeItem = target.closest('.tree-item');
+        if (!treeItem) return;
+        
+        const itemId = treeItem.dataset.itemId;
+        if (!itemId) return;
+        
+        // Handle delete button click
+        if (target.dataset.action === 'delete') {
+            e.stopPropagation();
+            deleteItem(itemId);
+            return;
+        }
+        
+        // Handle item selection (ignore clicks on action buttons)
+        if (!target.closest('.tree-item-actions')) {
+            const item = findItemById(bomBuilder.root, itemId);
+            if (item) {
+                selectItem(item);
+            }
+        }
+    };
+    
+    treeContainer.addEventListener('click', treeClickHandler);
 }
 
 function selectItem(item) {
@@ -282,7 +355,7 @@ function renderPartDetails(item) {
             </div>
             <div class="form-group">
                 <label>Description</label>
-                <textarea id="edit-description" rows="3">${escapedDescription}</textarea>
+                <textarea id="edit-description" rows="3"></textarea>
             </div>
             <div class="form-group">
                 <label>Compatibility Rules</label>
@@ -295,6 +368,11 @@ function renderPartDetails(item) {
                 <button class="btn-primary" onclick="saveItemDetails()">Save Changes</button>
             </div>
         `;
+        // Set textarea value using textContent for security (after innerHTML creates the element)
+        const descriptionTextarea = detailsContainer.querySelector('#edit-description');
+        if (descriptionTextarea) {
+            descriptionTextarea.textContent = escapedDescription;
+        }
     }
 }
 
@@ -336,8 +414,7 @@ function saveItemDetails() {
     
     renderTree();
     renderPartDetails(selectedItem);
-    updateCostDisplay();
-    validateBOM();
+    debouncedValidateBOM();
 }
 
 function deleteItem(itemId) {
@@ -353,8 +430,7 @@ function deleteItem(itemId) {
             renderPartDetails(null);
         }
         renderTree();
-        updateCostDisplay();
-        validateBOM();
+        debouncedValidateBOM();
     }
 }
 
@@ -370,11 +446,8 @@ function findItemById(item, id) {
     return null;
 }
 
-function updateCostDisplay() {
-    if (!bomBuilder || !bomBuilder.root) return;
-    const total = bomBuilder.calculateTotalCost();
-    console.log('Total BOM cost:', total);
-}
+// Removed updateCostDisplay() - was non-functional (only logged to console)
+// Cost is already displayed in the tree items and part details panel
 
 function validateBOM() {
     const errors = [];
@@ -430,6 +503,9 @@ function validateBOM() {
     }
 }
 
+// Debounced version of validateBOM (300ms delay)
+const debouncedValidateBOM = debounce(validateBOM, 300);
+
 function saveBOM() {
     if (!bomBuilder || !bomBuilder.root) {
         alert('No BOM to save. Add some parts first!');
@@ -478,19 +554,34 @@ function handleFileLoad(event) {
             renderTree();
             selectedItem = null;
             renderPartDetails(null);
-            updateCostDisplay();
-            validateBOM();
+            validateBOM(); // Load validation doesn't need debouncing
+            // Reset file input to allow reloading the same file
+            if (event.target) {
+                event.target.value = '';
+            }
             alert('BOM loaded successfully!');
         } catch (error) {
             console.error('Error loading BOM:', error);
             alert('Error loading BOM: ' + (error.message || 'Unknown error'));
+            // Reset file input even on error
+            if (event.target) {
+                event.target.value = '';
+            }
         }
     };
     reader.onerror = function() {
         alert('Error reading file');
+        // Reset file input on error
+        if (event.target) {
+            event.target.value = '';
+        }
     };
     reader.onabort = function() {
         console.warn('File read aborted');
+        // Reset file input on abort
+        if (event.target) {
+            event.target.value = '';
+        }
     };
     reader.readAsText(file);
 }
@@ -550,8 +641,7 @@ function loadSample() {
         renderTree();
         selectedItem = null;
         renderPartDetails(null);
-        updateCostDisplay();
-        validateBOM();
+        validateBOM(); // Sample load validation doesn't need debouncing
         alert('Sample BOM loaded!');
     } catch (error) {
         console.error('Error loading sample:', error);
@@ -571,6 +661,123 @@ function switchTab(tabName) {
     const tabContent = document.getElementById(tabName);
     if (tabBtn) tabBtn.classList.add('active');
     if (tabContent) tabContent.classList.add('active');
+}
+
+function setupTooltips() {
+    // Prevent duplicate setup
+    if (tooltipsSetup) return;
+    
+    const tooltip = document.getElementById('export-tooltip');
+    if (!tooltip) return;
+    
+    const infoIcons = document.querySelectorAll('.info-icon[data-tooltip="export-tooltip"]');
+    if (infoIcons.length === 0) return;
+    
+    let currentIcon = null;
+    
+    function showTooltip(icon) {
+        if (!tooltip || !icon) return;
+        
+        try {
+            currentIcon = icon;
+            tooltip.classList.remove('hidden');
+            
+            // Use requestAnimationFrame to ensure tooltip is rendered before calculating position
+            requestAnimationFrame(() => {
+                try {
+                    // Check if elements still exist
+                    if (!tooltip || !icon) return;
+                    
+                    // Position tooltip relative to icon
+                    const rect = icon.getBoundingClientRect();
+                    const tooltipRect = tooltip.getBoundingClientRect();
+                    
+                    // Validate rects are valid
+                    if (!rect || !tooltipRect || tooltipRect.width === 0 || tooltipRect.height === 0) {
+                        // Fallback positioning
+                        tooltip.style.top = '50%';
+                        tooltip.style.left = '50%';
+                        tooltip.style.transform = 'translate(-50%, -50%)';
+                        return;
+                    }
+                    
+                    // Try to position below the icon, or above if not enough space
+                    let top = rect.bottom + 10;
+                    let left = rect.left + (rect.width / 2) - (tooltipRect.width / 2);
+                    
+                    // Adjust if tooltip would go off screen
+                    if (top + tooltipRect.height > window.innerHeight) {
+                        top = rect.top - tooltipRect.height - 10;
+                    }
+                    if (left < 10) {
+                        left = 10;
+                    }
+                    if (left + tooltipRect.width > window.innerWidth - 10) {
+                        left = window.innerWidth - tooltipRect.width - 10;
+                    }
+                    
+                    tooltip.style.top = top + 'px';
+                    tooltip.style.left = left + 'px';
+                    tooltip.style.transform = 'none';
+                } catch (error) {
+                    console.warn('Error positioning tooltip:', error);
+                    // Fallback: center the tooltip
+                    tooltip.style.top = '50%';
+                    tooltip.style.left = '50%';
+                    tooltip.style.transform = 'translate(-50%, -50%)';
+                }
+            });
+        } catch (error) {
+            console.warn('Error showing tooltip:', error);
+        }
+    }
+    
+    function hideTooltip() {
+        try {
+            if (tooltip) {
+                tooltip.classList.add('hidden');
+            }
+            currentIcon = null;
+        } catch (error) {
+            console.warn('Error hiding tooltip:', error);
+        }
+    }
+    
+    // Set up icon event listeners
+    infoIcons.forEach(icon => {
+        icon.addEventListener('mouseenter', () => showTooltip(icon));
+        icon.addEventListener('mouseleave', () => hideTooltip());
+        icon.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (currentIcon === icon && !tooltip.classList.contains('hidden')) {
+                hideTooltip();
+            } else {
+                showTooltip(icon);
+            }
+        });
+    });
+    
+    // Close tooltip when clicking outside - only add once
+    if (!tooltipHandlers.documentClick) {
+        tooltipHandlers.documentClick = (e) => {
+            if (currentIcon && !currentIcon.contains(e.target) && tooltip && !tooltip.contains(e.target)) {
+                hideTooltip();
+            }
+        };
+        document.addEventListener('click', tooltipHandlers.documentClick);
+    }
+    
+    // Close tooltip on escape key - only add once
+    if (!tooltipHandlers.documentKeydown) {
+        tooltipHandlers.documentKeydown = (e) => {
+            if (e.key === 'Escape' && tooltip && !tooltip.classList.contains('hidden')) {
+                hideTooltip();
+            }
+        };
+        document.addEventListener('keydown', tooltipHandlers.documentKeydown);
+    }
+    
+    tooltipsSetup = true;
 }
 
 window.saveItemDetails = saveItemDetails;

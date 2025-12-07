@@ -96,6 +96,7 @@ async function generateXSLTOutputs(bomXML) {
 async function transformWithSaxonJS(sourceDoc, xsltUrl, saxonJSInstance) {
     return new Promise((resolve, reject) => {
         try {
+            // Validate inputs
             if (!sourceDoc || !xsltUrl) {
                 reject(new Error('Missing source document or XSLT URL'));
                 return;
@@ -113,87 +114,136 @@ async function transformWithSaxonJS(sourceDoc, xsltUrl, saxonJSInstance) {
             // Try to load as SEF first, fallback to browser's native XSLTProcessor
             const sefUrl = xsltUrl.replace('.xslt', '.sef.json').replace('.xsl', '.sef.json');
             
+            // Helper function for native XSLTProcessor fallback
+            function useNativeXSLTProcessor() {
+                try {
+                    fetch(xsltUrl)
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error(`Failed to load XSLT: ${response.status} ${response.statusText}`);
+                            }
+                            return response.text();
+                        })
+                        .then(xsltText => {
+                            try {
+                                // Parse XSLT
+                                const parser = new DOMParser();
+                                if (!parser) {
+                                    throw new Error('DOMParser not available');
+                                }
+                                
+                                const xsltDoc = parser.parseFromString(xsltText, 'text/xml');
+                                
+                                // Check for parsing errors
+                                const parseError = xsltDoc.querySelector('parsererror');
+                                if (parseError) {
+                                    throw new Error('Invalid XSLT: ' + parseError.textContent);
+                                }
+                                
+                                // Use browser's native XSLTProcessor (XSLT 1.0)
+                                // Note: This only supports XSLT 1.0, not XSLT 3.0 features
+                                if (typeof XSLTProcessor === 'undefined') {
+                                    throw new Error('XSLTProcessor not available in this browser');
+                                }
+                                
+                                const processor = new XSLTProcessor();
+                                processor.importStylesheet(xsltDoc);
+                                
+                                const result = processor.transformToDocument(sourceDoc);
+                                if (!result) {
+                                    throw new Error('XSLT transformation returned null result');
+                                }
+                                
+                                // Convert result document to string
+                                const serializer = new XMLSerializer();
+                                if (!serializer) {
+                                    throw new Error('XMLSerializer not available');
+                                }
+                                
+                                const htmlString = serializer.serializeToString(result);
+                                if (!htmlString) {
+                                    throw new Error('Serialization returned empty string');
+                                }
+                                
+                                resolve(htmlString);
+                            } catch (parseError) {
+                                console.error('Error parsing or processing XSLT:', parseError);
+                                reject(new Error('XSLT processing failed: ' + (parseError.message || 'Unknown error')));
+                            }
+                        })
+                        .catch(fetchError => {
+                            console.error('Error fetching XSLT file:', fetchError);
+                            reject(new Error('Failed to load XSLT file: ' + (fetchError.message || 'Unknown error')));
+                        });
+                } catch (error) {
+                    console.error('Error in useNativeXSLTProcessor:', error);
+                    reject(new Error('XSLT transformation setup failed: ' + (error.message || 'Unknown error')));
+                }
+            }
+            
             // First try SEF file (pre-compiled)
             fetch(sefUrl)
                 .then(response => {
                     if (response.ok) {
-                        return response.json();
+                        return response.json().catch(jsonError => {
+                            throw new Error('Failed to parse SEF JSON: ' + (jsonError.message || 'Invalid JSON'));
+                        });
                     }
-                    throw new Error('SEF file not found, trying native XSLTProcessor');
+                    throw new Error('SEF file not found (status: ' + response.status + '), trying native XSLTProcessor');
                 })
                 .then(sefData => {
-                    // Use compiled SEF with SaxonJS
-                    const options = {
-                        stylesheetInternal: sefData,
-                        sourceNode: sourceDoc,
-                        destination: 'serialized'
-                    };
-                    
-                    const transformPromise = saxonJS.transform(options, 'async');
-                    
-                    if (!transformPromise || typeof transformPromise.then !== 'function') {
-                        throw new Error('SaxonJS.transform did not return a promise');
+                    try {
+                        if (!sefData) {
+                            throw new Error('SEF data is empty');
+                        }
+                        
+                        // Use compiled SEF with SaxonJS
+                        const options = {
+                            stylesheetInternal: sefData,
+                            sourceNode: sourceDoc,
+                            destination: 'serialized'
+                        };
+                        
+                        const transformPromise = saxonJS.transform(options, 'async');
+                        
+                        if (!transformPromise) {
+                            throw new Error('SaxonJS.transform returned null');
+                        }
+                        
+                        if (typeof transformPromise.then !== 'function') {
+                            throw new Error('SaxonJS.transform did not return a promise');
+                        }
+                        
+                        return transformPromise;
+                    } catch (transformError) {
+                        throw new Error('SaxonJS transformation setup failed: ' + (transformError.message || 'Unknown error'));
                     }
-                    
-                    return transformPromise;
                 })
                 .then(output => {
-                    if (!output) {
-                        throw new Error('SaxonJS returned empty output');
-                    }
-                    if (output.principalResult) {
-                        resolve(output.principalResult);
-                    } else if (typeof output === 'string') {
-                        resolve(output);
-                    } else {
-                        throw new Error('Unexpected output format from SaxonJS: ' + typeof output);
+                    try {
+                        if (!output) {
+                            throw new Error('SaxonJS returned empty output');
+                        }
+                        
+                        if (output.principalResult) {
+                            resolve(output.principalResult);
+                        } else if (typeof output === 'string') {
+                            resolve(output);
+                        } else {
+                            throw new Error('Unexpected output format from SaxonJS: ' + typeof output);
+                        }
+                    } catch (outputError) {
+                        reject(new Error('Error processing SaxonJS output: ' + (outputError.message || 'Unknown error')));
                     }
                 })
                 .catch(sefError => {
-                    console.warn('SEF file not available, using browser native XSLTProcessor:', sefError);
+                    console.warn('SEF file not available, using browser native XSLTProcessor:', sefError.message || sefError);
                     // Fallback to browser's native XSLTProcessor (XSLT 1.0)
                     useNativeXSLTProcessor();
                 });
-            
-            function useNativeXSLTProcessor() {
-                fetch(xsltUrl)
-                    .then(response => {
-                        if (!response.ok) {
-                            throw new Error(`Failed to load XSLT: ${response.statusText}`);
-                        }
-                        return response.text();
-                    })
-                    .then(xsltText => {
-                        // Parse XSLT
-                        const parser = new DOMParser();
-                        const xsltDoc = parser.parseFromString(xsltText, 'text/xml');
-                        
-                        // Check for parsing errors
-                        const parseError = xsltDoc.querySelector('parsererror');
-                        if (parseError) {
-                            throw new Error('Invalid XSLT: ' + parseError.textContent);
-                        }
-                        
-                        // Use browser's native XSLTProcessor (XSLT 1.0)
-                        // Note: This only supports XSLT 1.0, not XSLT 3.0 features
-                        const processor = new XSLTProcessor();
-                        processor.importStylesheet(xsltDoc);
-                        
-                        const result = processor.transformToDocument(sourceDoc);
-                        
-                        // Convert result document to string
-                        const serializer = new XMLSerializer();
-                        const htmlString = serializer.serializeToString(result);
-                        
-                        resolve(htmlString);
-                    })
-                    .catch(error => {
-                        console.error('Error with native XSLTProcessor:', error);
-                        reject(new Error('XSLT transformation failed: ' + (error.message || 'Unknown error')));
-                    });
-            }
         } catch (error) {
-            reject(error);
+            console.error('Error in transformWithSaxonJS:', error);
+            reject(new Error('XSLT transformation failed: ' + (error.message || 'Unknown error')));
         }
     });
 }

@@ -48,10 +48,12 @@ class BOMBuilder {
             }
             parent.children.push(part);
         } else {
+            // Ensure root exists and is properly initialized
             if (!this.root) {
                 this.root = this.createAssembly('Root Assembly');
             }
-            if (!this.root.children) {
+            // Ensure root has children array (defensive check)
+            if (!Array.isArray(this.root.children)) {
                 this.root.children = [];
             }
             this.root.children.push(part);
@@ -181,8 +183,9 @@ class BOMBuilder {
             this.root = null;
             this.currentId = 0;
             
-            const assemblies = bomElement.querySelectorAll('assembly');
-            const parts = bomElement.querySelectorAll('part');
+            // Use :scope > selectors to only match top-level children, not nested elements
+            const assemblies = bomElement.querySelectorAll(':scope > assembly');
+            const parts = bomElement.querySelectorAll(':scope > part');
             
             if (assemblies.length > 0 || parts.length > 0) {
                 if (assemblies.length === 1 && parts.length === 0) {
